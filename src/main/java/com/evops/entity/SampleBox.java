@@ -16,6 +16,7 @@ public class SampleBox extends BaseEntity {
     private Integer capacity;
     private String status;
     private LocalDateTime sealedTime;
+    private Long tenantId;
     private String remark;
 
     public String getBoxNo() { return boxNo; }
@@ -30,6 +31,8 @@ public class SampleBox extends BaseEntity {
     public void setStatus(String status) { this.status = status; }
     public LocalDateTime getSealedTime() { return sealedTime; }
     public void setSealedTime(LocalDateTime sealedTime) { this.sealedTime = sealedTime; }
+    public Long getTenantId() { return tenantId; }
+    public void setTenantId(Long tenantId) { this.tenantId = tenantId; }
     public String getRemark() { return remark; }
     public void setRemark(String remark) { this.remark = remark; }
 }

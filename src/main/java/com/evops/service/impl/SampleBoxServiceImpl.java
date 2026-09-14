@@ -12,6 +12,9 @@ import com.evops.entity.SampleBox;
 import com.evops.entity.StorageLocation;
 import com.evops.mapper.IceCoreSampleMapper;
 import com.evops.mapper.SampleBoxMapper;
+import com.evops.security.DataScopeFilters;
+import com.evops.security.DataScopeService;
+import com.evops.security.QueryScope;
 import com.evops.service.DrillTaskService;
 import com.evops.service.SampleBoxService;
 import com.evops.service.StorageLocationService;
@@ -31,13 +34,16 @@ public class SampleBoxServiceImpl extends ServiceImpl<SampleBoxMapper, SampleBox
     private final DrillTaskService drillTaskService;
     private final StorageLocationService storageLocationService;
     private final IceCoreSampleMapper sampleMapper;
+    private final DataScopeService dataScopeService;
 
     public SampleBoxServiceImpl(DrillTaskService drillTaskService,
                                 StorageLocationService storageLocationService,
-                                IceCoreSampleMapper sampleMapper) {
+                                IceCoreSampleMapper sampleMapper,
+                                DataScopeService dataScopeService) {
         this.drillTaskService = drillTaskService;
         this.storageLocationService = storageLocationService;
         this.sampleMapper = sampleMapper;
+        this.dataScopeService = dataScopeService;
     }
 
     @Override
@@ -47,7 +53,8 @@ public class SampleBoxServiceImpl extends ServiceImpl<SampleBoxMapper, SampleBox
         if (count != null && count > 0) {
             throw new BizException("样本盒编号已存在: " + req.getBoxNo());
         }
-        if (drillTaskService.getById(req.getTaskId()) == null) {
+        com.evops.entity.DrillTask task = drillTaskService.getById(req.getTaskId());
+        if (task == null) {
             throw new BizException("钻取任务不存在: " + req.getTaskId());
         }
         ensureLocationUsable(req.getLocationId());
@@ -58,6 +65,8 @@ public class SampleBoxServiceImpl extends ServiceImpl<SampleBoxMapper, SampleBox
         box.setCapacity(req.getCapacity());
         box.setRemark(req.getRemark());
         box.setStatus(SampleBoxStatus.EMPTY);
+        // 盒跟随任务租户，保证归属一致
+        box.setTenantId(task.getTenantId() == null ? 0L : task.getTenantId());
         save(box);
         storageLocationService.refreshLoadStatus(req.getLocationId());
         return box;
@@ -128,11 +137,17 @@ public class SampleBoxServiceImpl extends ServiceImpl<SampleBoxMapper, SampleBox
 
     @Override
     public Page<SampleBox> pageQuery(Long taskId, Long locationId, String status, int page, int size) {
+        com.evops.common.page.PageParams.validate(page, size);
+        QueryScope scope = dataScopeService.currentScope();
         LambdaQueryWrapper<SampleBox> wrapper = new LambdaQueryWrapper<SampleBox>()
                 .eq(taskId != null, SampleBox::getTaskId, taskId)
                 .eq(locationId != null, SampleBox::getLocationId, locationId)
-                .eq(StringUtils.hasText(status), SampleBox::getStatus, status)
-                .orderByDesc(SampleBox::getId);
+                .eq(StringUtils.hasText(status), SampleBox::getStatus, status);
+        if (DataScopeFilters.isNone(scope)) {
+            return new Page<>(page, size);
+        }
+        DataScopeFilters.applyBox(wrapper, scope);
+        wrapper.orderByDesc(SampleBox::getId);
         return page(new Page<>(page, size), wrapper);
     }
 

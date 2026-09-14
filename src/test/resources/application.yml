@@ -10,5 +10,7 @@ spring:
       schema-locations: classpath:schema.sql
 
 mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  type-aliases-package: com.evops
   configuration:
     map-underscore-to-camel-case: true

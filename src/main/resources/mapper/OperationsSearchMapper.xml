@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.evops.mapper.OperationsSearchMapper">
+
+    <!-- ================= 冰芯样本：数据权限片段（驱动别名 s） ================= -->
+    <sql id="sampleScope">
+        <choose>
+            <when test="scope.level == 'TENANT'">
+                AND s.tenant_id = #{scope.tenantId}
+            </when>
+            <when test="scope.level == 'GRANTED'">
+                AND (
+                    EXISTS (SELECT 1 FROM t_data_grant g
+                            WHERE g.account_id = #{scope.accountId}
+                              AND g.object_type = 'SAMPLE' AND g.object_id = s.id)
+                    OR EXISTS (SELECT 1 FROM t_data_grant g
+                            WHERE g.account_id = #{scope.accountId}
+                              AND g.object_type = 'BOX' AND g.object_id = s.box_id)
+                    OR EXISTS (SELECT 1 FROM t_data_grant g
+                            WHERE g.account_id = #{scope.accountId}
+                              AND g.object_type = 'TASK' AND g.object_id = s.task_id)
+                    OR (s.location_id IS NOT NULL AND EXISTS (SELECT 1 FROM t_data_grant g
+                            WHERE g.account_id = #{scope.accountId}
+                              AND g.object_type = 'LOCATION' AND g.object_id = s.location_id))
+                )
+            </when>
+            <when test="scope.level == 'NONE'">
+                AND 1 = 0
+            </when>
+        </choose>
+    </sql>
+
+    <!-- ================= 冰芯样本：业务过滤片段（AND/范围组合） ================= -->
+    <sql id="sampleFilters">
+        <if test="q.taskId != null">AND s.task_id = #{q.taskId}</if>
+        <if test="q.boxId != null">AND s.box_id = #{q.boxId}</if>
+        <if test="q.locationId != null">AND s.location_id = #{q.locationId}</if>
+        <if test="q.status != null and q.status != ''">AND s.status = #{q.status}</if>
+        <if test="q.layerNos != null and q.layerNos.size() > 0">
+            AND s.layer_no IN
+            <foreach collection="q.layerNos" item="ln" open="(" separator="," close=")">#{ln}</foreach>
+        </if>
+        <if test="q.sampledFrom != null">AND s.sampled_at &gt;= #{q.sampledFrom}</if>
+        <if test="q.sampledTo != null">AND s.sampled_at &lt; #{q.sampledTo}</if>
+        <if test="q.depthTopMin != null">AND s.depth_top &gt;= #{q.depthTopMin}</if>
+        <if test="q.depthTopMax != null">AND s.depth_top &lt;= #{q.depthTopMax}</if>
+        <if test="q.depthBottomMin != null">AND s.depth_bottom &gt;= #{q.depthBottomMin}</if>
+        <if test="q.depthBottomMax != null">AND s.depth_bottom &lt;= #{q.depthBottomMax}</if>
+        <if test="q.temperatureMin != null">AND s.temperature &gt;= #{q.temperatureMin}</if>
+        <if test="q.temperatureMax != null">AND s.temperature &lt;= #{q.temperatureMax}</if>
+        <!-- 批次一对多：EXISTS 半连接，只过滤不放大主表 -->
+        <if test="q.batchId != null">
+            AND EXISTS (SELECT 1 FROM t_analysis_batch_item bi
+                        WHERE bi.batch_id = #{q.batchId} AND bi.sample_id = s.id)
+        </if>
+    </sql>
+
+    <!-- 键集游标谓词：仅分页查询引入，COUNT 不引入（总数不随游标变化） -->
+    <sql id="sampleCursor">
+        <if test="q.cursorMode and q.lastId != null and q.sortOrder == 'ASC'">AND s.id &gt; #{q.lastId}</if>
+        <if test="q.cursorMode and q.lastId != null and q.sortOrder != 'ASC'">AND s.id &lt; #{q.lastId}</if>
+    </sql>
+
+    <select id="searchSamples" resultType="com.evops.vo.SampleSearchVO">
+        SELECT s.id, s.sample_no, s.task_id, t.task_no, t.task_name,
+               s.box_id, b.box_no, s.location_id, l.location_code,
+               s.layer_no, s.depth_top, s.depth_bottom, s.temperature,
+               s.melt_water_ml, s.integrity_pct, s.status, s.sampled_at, s.tenant_id,
+               (SELECT COUNT(1) FROM t_ice_layer_slice ls2 WHERE ls2.sample_id = s.id) AS slice_count
+        FROM t_ice_core_sample s
+        LEFT JOIN t_drill_task t ON t.id = s.task_id
+        LEFT JOIN t_sample_box b ON b.id = s.box_id
+        LEFT JOIN t_storage_location l ON l.id = s.location_id
+        WHERE 1 = 1
+        <include refid="sampleFilters"/>
+        <include refid="sampleCursor"/>
+        <include refid="sampleScope"/>
+        <choose>
+            <when test="q.sortOrder == 'ASC'">ORDER BY s.id ASC</when>
+            <otherwise>ORDER BY s.id DESC</otherwise>
+        </choose>
+        LIMIT #{q.limit}
+        <if test="!q.cursorMode">OFFSET #{q.offset}</if>
+    </select>
+
+    <select id="countSamples" resultType="long">
+        SELECT COUNT(1) FROM t_ice_core_sample s
+        WHERE 1 = 1
+        <include refid="sampleFilters"/>
+        <include refid="sampleScope"/>
+    </select>
+
+    <!-- ================= 层位切片：数据权限片段（驱动别名 ls） ================= -->
+    <sql id="sliceScope">
+        <choose>
+            <when test="scope.level == 'TENANT'">
+                AND ls.tenant_id = #{scope.tenantId}
+            </when>
+            <when test="scope.level == 'GRANTED'">
+                AND (
+                    EXISTS (SELECT 1 FROM t_data_grant g
+                            WHERE g.account_id = #{scope.accountId}
+                              AND g.object_type = 'SAMPLE' AND g.object_id = ls.sample_id)
+                    OR (ls.location_id IS NOT NULL AND EXISTS (SELECT 1 FROM t_data_grant g
+                            WHERE g.account_id = #{scope.accountId}
+                              AND g.object_type = 'LOCATION' AND g.object_id = ls.location_id))
+                    OR EXISTS (SELECT 1 FROM t_ice_core_sample s2
+                            WHERE s2.id = ls.sample_id
+                              AND EXISTS (SELECT 1 FROM t_data_grant g
+                                    WHERE g.account_id = #{scope.accountId}
+                                      AND g.object_type = 'TASK' AND g.object_id = s2.task_id))
+                    OR EXISTS (SELECT 1 FROM t_ice_core_sample s3
+                            WHERE s3.id = ls.sample_id
+                              AND EXISTS (SELECT 1 FROM t_data_grant g
+                                    WHERE g.account_id = #{scope.accountId}
+                                      AND g.object_type = 'BOX' AND g.object_id = s3.box_id))
+                )
+            </when>
+            <when test="scope.level == 'NONE'">
+                AND 1 = 0
+            </when>
+        </choose>
+    </sql>
+
+    <sql id="sliceFilters">
+        <if test="q.locationId != null">AND ls.location_id = #{q.locationId}</if>
+        <if test="q.sampleId != null">AND ls.sample_id = #{q.sampleId}</if>
+        <if test="q.layerNos != null and q.layerNos.size() > 0">
+            AND ls.layer_no IN
+            <foreach collection="q.layerNos" item="ln" open="(" separator="," close=")">#{ln}</foreach>
+        </if>
+        <if test="q.depthMin != null">AND ls.depth_top &gt;= #{q.depthMin}</if>
+        <if test="q.depthMax != null">AND ls.depth_bottom &lt;= #{q.depthMax}</if>
+        <if test="q.temperatureMin != null">AND ls.temperature &gt;= #{q.temperatureMin}</if>
+        <if test="q.temperatureMax != null">AND ls.temperature &lt;= #{q.temperatureMax}</if>
+        <if test="q.measuredFrom != null">AND ls.measured_at &gt;= #{q.measuredFrom}</if>
+        <if test="q.measuredTo != null">AND ls.measured_at &lt; #{q.measuredTo}</if>
+    </sql>
+
+    <!-- 键集游标谓词：(layer_no, id) 复合锚点，仅分页查询引入 -->
+    <sql id="sliceCursor">
+        <if test="q.cursorMode and q.lastId != null">
+            AND (
+                ls.layer_no &gt; #{q.lastLayerNo}
+                OR (ls.layer_no = #{q.lastLayerNo} AND ls.id &gt; #{q.lastId})
+            )
+        </if>
+    </sql>
+
+    <!-- 固定按层位分区 (layer_no ASC) 再以确定性主键 (id ASC) 收尾 -->
+    <select id="searchLayerSlices" resultType="com.evops.vo.LayerSliceVO">
+        SELECT ls.id, ls.sample_id, smp.sample_no, ls.location_id, l.location_code,
+               ls.layer_no, ls.slice_index, ls.depth_top, ls.depth_bottom,
+               ls.temperature, ls.measured_at, ls.tenant_id
+        FROM t_ice_layer_slice ls
+        LEFT JOIN t_ice_core_sample smp ON smp.id = ls.sample_id
+        LEFT JOIN t_storage_location l ON l.id = ls.location_id
+        WHERE 1 = 1
+        <include refid="sliceFilters"/>
+        <include refid="sliceCursor"/>
+        <include refid="sliceScope"/>
+        ORDER BY ls.layer_no ASC, ls.id ASC
+        LIMIT #{q.limit}
+        <if test="!q.cursorMode">OFFSET #{q.offset}</if>
+    </select>
+
+    <select id="countLayerSlices" resultType="long">
+        SELECT COUNT(1) FROM t_ice_layer_slice ls
+        WHERE 1 = 1
+        <include refid="sliceFilters"/>
+        <include refid="sliceScope"/>
+    </select>
+
+    <!-- ================= 分钟级库温事件：数据权限片段（驱动别名 ft） ================= -->
+    <sql id="tempScope">
+        <choose>
+            <when test="scope.level == 'TENANT'">
+                AND ft.tenant_id = #{scope.tenantId}
+            </when>
+            <when test="scope.level == 'GRANTED'">
+                AND (
+                    EXISTS (SELECT 1 FROM t_data_grant g
+                            WHERE g.account_id = #{scope.accountId}
+                              AND g.object_type = 'LOCATION' AND g.object_id = ft.location_id)
+                    OR EXISTS (SELECT 1 FROM t_sample_box b
+                            WHERE b.location_id = ft.location_id
+                              AND EXISTS (SELECT 1 FROM t_data_grant g
+                                    WHERE g.account_id = #{scope.accountId}
+                                      AND g.object_type = 'TASK' AND g.object_id = b.task_id))
+                    OR EXISTS (SELECT 1 FROM t_sample_box b
+                            WHERE b.location_id = ft.location_id
+                              AND EXISTS (SELECT 1 FROM t_data_grant g
+                                    WHERE g.account_id = #{scope.accountId}
+                                      AND g.object_type = 'BOX' AND g.object_id = b.id))
+                    OR EXISTS (SELECT 1 FROM t_ice_core_sample s
+                            WHERE s.location_id = ft.location_id
+                              AND EXISTS (SELECT 1 FROM t_data_grant g
+                                    WHERE g.account_id = #{scope.accountId}
+                                      AND g.object_type = 'SAMPLE' AND g.object_id = s.id))
+                )
+            </when>
+            <when test="scope.level == 'NONE'">
+                AND 1 = 0
+            </when>
+        </choose>
+    </sql>
+
+    <sql id="tempFilters">
+        <if test="q.locationIds != null and q.locationIds.size() > 0">
+            AND ft.location_id IN
+            <foreach collection="q.locationIds" item="lid" open="(" separator="," close=")">#{lid}</foreach>
+        </if>
+        <if test="q.layerNos != null and q.layerNos.size() > 0">
+            AND l.layer_no IN
+            <foreach collection="q.layerNos" item="ln" open="(" separator="," close=")">#{ln}</foreach>
+        </if>
+        <if test="q.recordedFrom != null">AND ft.recorded_at &gt;= #{q.recordedFrom}</if>
+        <if test="q.recordedTo != null">AND ft.recorded_at &lt; #{q.recordedTo}</if>
+        <if test="q.alarmOnly != null and q.alarmOnly">AND ft.alarm_flag = 1</if>
+        <if test="q.minDeviation != null">AND ft.deviation &gt;= #{q.minDeviation}</if>
+    </sql>
+
+    <!-- 键集游标谓词：(recorded_at DESC, id DESC) 复合锚点，仅分页查询引入 -->
+    <sql id="tempCursor">
+        <if test="q.cursorMode and q.lastId != null">
+            AND (
+                ft.recorded_at &lt; #{q.lastRecordedAt}
+                OR (ft.recorded_at = #{q.lastRecordedAt} AND ft.id &lt; #{q.lastId})
+            )
+        </if>
+    </sql>
+
+    <select id="searchTemperatures" resultType="com.evops.vo.TemperatureVO">
+        SELECT ft.id, ft.location_id, l.location_code, l.layer_no, l.warehouse,
+               ft.recorded_at, ft.measured_temperature, ft.set_temperature,
+               ft.deviation, ft.alarm_flag, ft.tenant_id
+        FROM t_freezer_temperature ft
+        LEFT JOIN t_storage_location l ON l.id = ft.location_id
+        WHERE 1 = 1
+        <include refid="tempFilters"/>
+        <include refid="tempCursor"/>
+        <include refid="tempScope"/>
+        ORDER BY ft.recorded_at DESC, ft.id DESC
+        LIMIT #{q.limit}
+        <if test="!q.cursorMode">OFFSET #{q.offset}</if>
+    </select>
+
+    <select id="countTemperatures" resultType="long">
+        SELECT COUNT(1)
+        FROM t_freezer_temperature ft
+        LEFT JOIN t_storage_location l ON l.id = ft.location_id
+        WHERE 1 = 1
+        <include refid="tempFilters"/>
+        <include refid="tempScope"/>
+    </select>
+
+    <!-- ================= 库位层位分区汇总（驱动别名 ls，复用 sliceScope） ================= -->
+    <select id="layerPartitions" resultType="java.util.LinkedHashMap">
+        SELECT ls.layer_no AS "layerNo", COUNT(1) AS "sliceCount"
+        FROM t_ice_layer_slice ls
+        WHERE 1 = 1
+        <if test="locationId != null">AND ls.location_id = #{locationId}</if>
+        <if test="cursorMode">AND ls.layer_no &gt; #{lastLayerNo}</if>
+        <include refid="sliceScope"/>
+        GROUP BY ls.layer_no
+        ORDER BY ls.layer_no ASC
+        LIMIT #{limit}
+        <if test="!cursorMode">OFFSET #{offset}</if>
+    </select>
+
+    <select id="countLayerPartitions" resultType="long">
+        SELECT COUNT(DISTINCT ls.layer_no)
+        FROM t_ice_layer_slice ls
+        WHERE 1 = 1
+        <if test="locationId != null">AND ls.location_id = #{locationId}</if>
+        <include refid="sliceScope"/>
+    </select>
+</mapper>

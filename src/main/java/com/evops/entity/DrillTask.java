@@ -18,6 +18,7 @@ public class DrillTask extends BaseEntity {
     private String status;
     private LocalDate plannedStart;
     private LocalDate plannedEnd;
+    private Long tenantId;
     private String remark;
 
     public String getTaskNo() { return taskNo; }
@@ -34,6 +35,8 @@ public class DrillTask extends BaseEntity {
     public void setPlannedStart(LocalDate plannedStart) { this.plannedStart = plannedStart; }
     public LocalDate getPlannedEnd() { return plannedEnd; }
     public void setPlannedEnd(LocalDate plannedEnd) { this.plannedEnd = plannedEnd; }
+    public Long getTenantId() { return tenantId; }
+    public void setTenantId(Long tenantId) { this.tenantId = tenantId; }
     public String getRemark() { return remark; }
     public void setRemark(String remark) { this.remark = remark; }
 }

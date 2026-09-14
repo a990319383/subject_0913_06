@@ -17,6 +17,7 @@ public class StorageLocation extends BaseEntity {
     private BigDecimal setTemperature;
     private Integer capacity;
     private String status;
+    private Long tenantId;
     private String remark;
 
     public String getLocationCode() { return locationCode; }
@@ -33,6 +34,8 @@ public class StorageLocation extends BaseEntity {
     public void setCapacity(Integer capacity) { this.capacity = capacity; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public Long getTenantId() { return tenantId; }
+    public void setTenantId(Long tenantId) { this.tenantId = tenantId; }
     public String getRemark() { return remark; }
     public void setRemark(String remark) { this.remark = remark; }
 }

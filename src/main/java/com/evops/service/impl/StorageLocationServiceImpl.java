@@ -12,6 +12,9 @@ import com.evops.entity.StorageLocation;
 import com.evops.mapper.IceCoreSampleMapper;
 import com.evops.mapper.SampleBoxMapper;
 import com.evops.mapper.StorageLocationMapper;
+import com.evops.security.DataScopeFilters;
+import com.evops.security.DataScopeService;
+import com.evops.security.QueryScope;
 import com.evops.service.StorageLocationService;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
@@ -26,10 +29,13 @@ public class StorageLocationServiceImpl extends ServiceImpl<StorageLocationMappe
 
     private final SampleBoxMapper sampleBoxMapper;
     private final IceCoreSampleMapper sampleMapper;
+    private final DataScopeService dataScopeService;
 
-    public StorageLocationServiceImpl(SampleBoxMapper sampleBoxMapper, IceCoreSampleMapper sampleMapper) {
+    public StorageLocationServiceImpl(SampleBoxMapper sampleBoxMapper, IceCoreSampleMapper sampleMapper,
+                                      DataScopeService dataScopeService) {
         this.sampleBoxMapper = sampleBoxMapper;
         this.sampleMapper = sampleMapper;
+        this.dataScopeService = dataScopeService;
     }
 
     @Override
@@ -43,6 +49,7 @@ public class StorageLocationServiceImpl extends ServiceImpl<StorageLocationMappe
         BeanUtils.copyProperties(req, location);
         location.setId(null);
         location.setStatus(StorageLocationStatus.AVAILABLE);
+        location.setTenantId(com.evops.security.TenantContext.currentTenantId());
         save(location);
         return location;
     }
@@ -93,9 +100,15 @@ public class StorageLocationServiceImpl extends ServiceImpl<StorageLocationMappe
 
     @Override
     public Page<StorageLocation> pageQuery(String status, int page, int size) {
+        com.evops.common.page.PageParams.validate(page, size);
+        QueryScope scope = dataScopeService.currentScope();
         LambdaQueryWrapper<StorageLocation> wrapper = new LambdaQueryWrapper<StorageLocation>()
-                .eq(StringUtils.hasText(status), StorageLocation::getStatus, status)
-                .orderByDesc(StorageLocation::getId);
+                .eq(StringUtils.hasText(status), StorageLocation::getStatus, status);
+        if (DataScopeFilters.isNone(scope)) {
+            return new Page<>(page, size);
+        }
+        DataScopeFilters.applyLocation(wrapper, scope);
+        wrapper.orderByDesc(StorageLocation::getId);
         return page(new Page<>(page, size), wrapper);
     }
 

@@ -10,6 +10,8 @@ import com.evops.entity.DrillTask;
 import com.evops.mapper.DrillTaskMapper;
 import com.evops.mapper.IceCoreSampleMapper;
 import com.evops.mapper.SampleBoxMapper;
+import com.evops.security.DataScopeService;
+import com.evops.security.QueryScope;
 import com.evops.service.DrillTaskService;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
@@ -23,10 +25,13 @@ public class DrillTaskServiceImpl extends ServiceImpl<DrillTaskMapper, DrillTask
 
     private final SampleBoxMapper sampleBoxMapper;
     private final IceCoreSampleMapper sampleMapper;
+    private final DataScopeService dataScopeService;
 
-    public DrillTaskServiceImpl(SampleBoxMapper sampleBoxMapper, IceCoreSampleMapper sampleMapper) {
+    public DrillTaskServiceImpl(SampleBoxMapper sampleBoxMapper, IceCoreSampleMapper sampleMapper,
+                                DataScopeService dataScopeService) {
         this.sampleBoxMapper = sampleBoxMapper;
         this.sampleMapper = sampleMapper;
+        this.dataScopeService = dataScopeService;
     }
 
     @Override
@@ -36,6 +41,7 @@ public class DrillTaskServiceImpl extends ServiceImpl<DrillTaskMapper, DrillTask
         BeanUtils.copyProperties(req, task);
         task.setId(null);
         task.setStatus(DrillTaskStatus.PLANNED);
+        task.setTenantId(com.evops.security.TenantContext.currentTenantId());
         save(task);
         return task;
     }
@@ -86,11 +92,17 @@ public class DrillTaskServiceImpl extends ServiceImpl<DrillTaskMapper, DrillTask
 
     @Override
     public Page<DrillTask> pageQuery(String status, String keyword, int page, int size) {
+        com.evops.common.page.PageParams.validate(page, size);
+        QueryScope scope = dataScopeService.currentScope();
         LambdaQueryWrapper<DrillTask> wrapper = new LambdaQueryWrapper<DrillTask>()
                 .eq(StringUtils.hasText(status), DrillTask::getStatus, status)
                 .and(StringUtils.hasText(keyword), w -> w.like(DrillTask::getTaskNo, keyword)
-                        .or().like(DrillTask::getTaskName, keyword))
-                .orderByDesc(DrillTask::getId);
+                        .or().like(DrillTask::getTaskName, keyword));
+        if (com.evops.security.DataScopeFilters.isNone(scope)) {
+            return new Page<>(page, size);
+        }
+        com.evops.security.DataScopeFilters.applyTask(wrapper, scope);
+        wrapper.orderByDesc(DrillTask::getId);
         return page(new Page<>(page, size), wrapper);
     }
 

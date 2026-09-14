@@ -13,6 +13,9 @@ import com.evops.entity.IceCoreSample;
 import com.evops.mapper.AnalysisBatchItemMapper;
 import com.evops.mapper.AnalysisBatchMapper;
 import com.evops.mapper.IceCoreSampleMapper;
+import com.evops.security.DataScopeFilters;
+import com.evops.security.DataScopeService;
+import com.evops.security.QueryScope;
 import com.evops.service.AnalysisBatchService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,10 +37,13 @@ public class AnalysisBatchServiceImpl extends ServiceImpl<AnalysisBatchMapper, A
 
     private final AnalysisBatchItemMapper batchItemMapper;
     private final IceCoreSampleMapper sampleMapper;
+    private final DataScopeService dataScopeService;
 
-    public AnalysisBatchServiceImpl(AnalysisBatchItemMapper batchItemMapper, IceCoreSampleMapper sampleMapper) {
+    public AnalysisBatchServiceImpl(AnalysisBatchItemMapper batchItemMapper, IceCoreSampleMapper sampleMapper,
+                                    DataScopeService dataScopeService) {
         this.batchItemMapper = batchItemMapper;
         this.sampleMapper = sampleMapper;
+        this.dataScopeService = dataScopeService;
     }
 
     @Override
@@ -168,9 +174,15 @@ public class AnalysisBatchServiceImpl extends ServiceImpl<AnalysisBatchMapper, A
 
     @Override
     public Page<AnalysisBatch> pageQuery(String status, int page, int size) {
+        com.evops.common.page.PageParams.validate(page, size);
+        QueryScope scope = dataScopeService.currentScope();
         LambdaQueryWrapper<AnalysisBatch> wrapper = new LambdaQueryWrapper<AnalysisBatch>()
-                .eq(StringUtils.hasText(status), AnalysisBatch::getStatus, status)
-                .orderByDesc(AnalysisBatch::getId);
+                .eq(StringUtils.hasText(status), AnalysisBatch::getStatus, status);
+        if (DataScopeFilters.isNone(scope)) {
+            return new Page<>(page, size);
+        }
+        DataScopeFilters.applyBatch(wrapper, scope);
+        wrapper.orderByDesc(AnalysisBatch::getId);
         return page(new Page<>(page, size), wrapper);
     }
 

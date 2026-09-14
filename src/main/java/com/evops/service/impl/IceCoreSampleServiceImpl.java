@@ -16,6 +16,7 @@ import com.evops.entity.StorageLocation;
 import com.evops.mapper.AnalysisBatchItemMapper;
 import com.evops.mapper.AnalysisBatchMapper;
 import com.evops.mapper.IceCoreSampleMapper;
+import com.evops.security.DataScopeService;
 import com.evops.service.DrillTaskService;
 import com.evops.service.IceCoreSampleService;
 import com.evops.service.SampleBoxService;
@@ -43,17 +44,20 @@ public class IceCoreSampleServiceImpl extends ServiceImpl<IceCoreSampleMapper, I
     private final StorageLocationService storageLocationService;
     private final AnalysisBatchItemMapper batchItemMapper;
     private final AnalysisBatchMapper batchMapper;
+    private final DataScopeService dataScopeService;
 
     public IceCoreSampleServiceImpl(SampleBoxService sampleBoxService,
                                     DrillTaskService drillTaskService,
                                     StorageLocationService storageLocationService,
                                     AnalysisBatchItemMapper batchItemMapper,
-                                    AnalysisBatchMapper batchMapper) {
+                                    AnalysisBatchMapper batchMapper,
+                                    DataScopeService dataScopeService) {
         this.sampleBoxService = sampleBoxService;
         this.drillTaskService = drillTaskService;
         this.storageLocationService = storageLocationService;
         this.batchItemMapper = batchItemMapper;
         this.batchMapper = batchMapper;
+        this.dataScopeService = dataScopeService;
     }
 
     @Override
@@ -83,6 +87,8 @@ public class IceCoreSampleServiceImpl extends ServiceImpl<IceCoreSampleMapper, I
         sample.setTaskId(box.getTaskId());
         sample.setLocationId(box.getLocationId());
         sample.setStatus(IceCoreSampleStatus.STORED);
+        // 样本跟随样本盒租户，保证归属一致
+        sample.setTenantId(box.getTenantId() == null ? 0L : box.getTenantId());
         save(sample);
         sampleBoxService.refreshLoadStatus(box.getId());
         return sample;
@@ -135,12 +141,18 @@ public class IceCoreSampleServiceImpl extends ServiceImpl<IceCoreSampleMapper, I
 
     @Override
     public Page<IceCoreSample> pageQuery(Long taskId, Long boxId, Long batchId, String status, int page, int size) {
+        com.evops.common.page.PageParams.validate(page, size);
+        com.evops.security.QueryScope scope = dataScopeService.currentScope();
+        if (com.evops.security.DataScopeFilters.isNone(scope)) {
+            return new Page<>(page, size);
+        }
         LambdaQueryWrapper<IceCoreSample> wrapper = new LambdaQueryWrapper<IceCoreSample>()
                 .eq(taskId != null, IceCoreSample::getTaskId, taskId)
                 .eq(boxId != null, IceCoreSample::getBoxId, boxId)
-                .eq(StringUtils.hasText(status), IceCoreSample::getStatus, status)
-                .orderByDesc(IceCoreSample::getId);
+                .eq(StringUtils.hasText(status), IceCoreSample::getStatus, status);
         if (batchId != null) {
+            // 批次明细对样本是一对一（同一样本同批次唯一），IN 主键不会放大主表；
+            // 批次无样本时直接空页
             List<Long> sampleIds = batchItemMapper.selectList(new LambdaQueryWrapper<AnalysisBatchItem>()
                             .eq(AnalysisBatchItem::getBatchId, batchId))
                     .stream().map(AnalysisBatchItem::getSampleId).collect(Collectors.toList());
@@ -149,6 +161,8 @@ public class IceCoreSampleServiceImpl extends ServiceImpl<IceCoreSampleMapper, I
             }
             wrapper.in(IceCoreSample::getId, sampleIds);
         }
+        com.evops.security.DataScopeFilters.applySample(wrapper, scope);
+        wrapper.orderByDesc(IceCoreSample::getId);
         return page(new Page<>(page, size), wrapper);
     }
 

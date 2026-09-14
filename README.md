@@ -39,3 +39,33 @@
 - `GET /api/icecore/monitor/temperature?threshold=2`：在库/分析中样本实测温度偏离库位设定温度的告警列表
 
 测试：`mvn test` 运行 `IceCoreClosedLoopTest`（唯一键、批次闭环、取消释放、非法流转、容量、删除保护、温度告警，共 7 例）。
+
+## 极地冰芯运营检索增强（icecore-2）
+
+在闭环之上补充**多租户数据权限**与**冻融环境监测运营检索**，满足大数据量稳定分页。
+
+**多租户与角色数据权限**
+
+- 表：`t_sys_tenant` 租户、`t_sys_account` 账号（角色 `PLATFORM` / `TENANT_ADMIN` / `TENANT_USER`）、`t_data_grant` 对象级授权（`TASK/LOCATION/BOX/SAMPLE/BATCH`）。
+- 身份通过请求头 `X-Account-Id`（或 `X-Account-Username`）指定，由 `AccountContextFilter` 解析；缺省按平台运营处理，兼容匿名运营接口。
+- 每次查询都强制数据权限：`PLATFORM` 全量；`TENANT_ADMIN` 限本租户 `tenant_id`；`TENANT_USER` 仅见直接授权或经任务/样本盒/库位间接授权的对象（SQL `EXISTS` 半连接）。
+- 管理接口：`POST /api/icecore/admin/tenants`、`POST /api/icecore/admin/accounts`、`POST /api/icecore/admin/grants`、`POST /api/icecore/admin/grants/revoke`、`GET /api/icecore/admin/grants?accountId=`。
+
+**运营检索（统一 `/api/icecore/search/**`）**
+
+- `GET /search/samples`：钻取任务、样本盒、库位、分析批次、状态、取样日期范围、层位集合、深度区间、实测温度区间的 **AND/范围组合**（≥4 条件）。批次一对多关联用 `EXISTS` 半连接，**不放大主表**。
+- `GET /search/slices`：**冰芯层位切片按层位分区**（`layer_no`）稳定分页。
+- `GET /search/temperatures`：**分钟级库温事件**按 `(recorded_at DESC, id DESC)` 倒序稳定分页，支持库位/层位/时间范围/仅告警/最小偏差。
+- `GET /search/partitions`：库位层位分区汇总（每层位切片数）。
+- 所有检索返回 `PageResult{records,total,pageSize,page,hasMore,nextCursor}`；`pageSize` 严格限定 **1-100**。
+- **双分页**：`page/size` 走 offset；不传 `page` 或带 `cursor` 走键集（keyset）游标，排序均以确定性主键 `id` 收尾，深分页不丢不重、不依赖不稳定 offset。
+- 关联展示字段（taskNo/boxNo/locationCode 等）以 `LEFT JOIN` 取冗余列，`slice_count` 以标量子查询统计，主表行数不被放大。
+
+**大数据量表**
+
+- `t_freezer_temperature`：分钟级库温事件（压测量级 100,000）。
+- `t_ice_layer_slice`：冰芯层位切片（压测量级 500,000），`layer_no` 分区键，按 `(tenant_id, layer_no, id)`、`(location_id, layer_no, id)` 等建索引。
+- 一键播种与基准：`POST /api/icecore/loadtest/seed`（默认 100,000 库温 + 500,000 切片，`reset`/`benchmark` 可选），数据隔离在专用 `LOADTEST` 租户。
+
+**测试**：`IceCoreSearchTest`（组合 AND/范围、批次不放大、offset/游标一致、pageSize 校验、租户/角色隔离、层位分区、库温倒序游标，共 7 例）；`IceCoreLoadTest` 在 **100,000 库温 + 500,000 切片**上校验总数、层位分区与时间倒序稳定排序、游标深翻页不丢不重（事务回滚，不污染库）。
+
